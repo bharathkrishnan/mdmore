@@ -1,11 +1,11 @@
 # mdmore
 
 mdmore is more or less a fast markdown pager written in Rust. It renders and highlights markdown text as you scroll,
-and keeps colors and formatting across page boundaries.
+and keeps colors and formatting across page boundaries. 
 
 ![mdmore paging through ripgrep's README](demo/mdmore.gif)
 
-[Watch the video](https://github.com/bharathkrishnan/mdmore/raw/refs/heads/main/demo/mdmore.mp4) · [Demo tape](demo/mdmore.tape)
+[Watch the video](https://github.com/bharathkrishnan/mdmore/raw/refs/heads/main/demo/mdmore.mp4)
 
 ## Install
 
@@ -96,8 +96,6 @@ syntax highlighting for the rest of that code block. Tables buffer one row
 to align cells; narrow or nested tables use a flowing layout. Raw HTML is
 displayed as text. Images are shown as their alt text and URL.
 
-Themes, cache limits, live streaming, and image rendering are not implemented.
-
 ## Development
 
 ```sh
@@ -111,19 +109,6 @@ cargo build --locked
 python3 tests/pty_smoke.py target/debug/mdmore   # macOS / Linux
 cargo bench --locked --bench first_page
 ```
-
-CI runs on Linux, macOS, and Windows, with terminal tests on Linux and macOS
-and a separate Rust 1.85 check.
-
-The benchmark measures indexing and rendering the first 25 rows at 80 columns.
-It excludes file I/O, process startup, and terminal output, and reports cold
-and warm syntax-loading times separately.
-
-Tagging `v<version>` builds the Mac and Linux archives and publishes a GitHub
-release. The tag must match the version in `Cargo.toml`. After the release,
-update `Formula/mdmore.rb` with the download URLs and checksums from
-the release's `SHA256SUMS` file.
-
 ## License
 
 [MIT](LICENSE).
