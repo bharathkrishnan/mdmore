@@ -1,0 +1,30 @@
+[package]
+name = "mdmore"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Markdown pager with progressive rendering"
+license = "MIT"
+repository = "https://github.com/bharathkrishnan/mdmore"
+exclude = ["private/**", "AGENTS.md"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.29"
+memchr = "2.8"
+pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["stdio", "termios", "fs"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[[bench]]
+name = "first_page"
+harness = false
