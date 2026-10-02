@@ -1,6 +1,6 @@
 # mdmore
 
-A Markdown pager written in Rust. It renders and highlights text as you scroll,
+mdmore is more or less a fast markdown pager written in Rust. It renders and highlights markdown text as you scroll,
 and keeps colors and formatting across page boundaries.
 
 ## Install
