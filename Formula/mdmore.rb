@@ -8,22 +8,22 @@ class Mdmore < Formula
 
     on_arm do
       url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.0/mdmore-v0.1.0-aarch64-apple-darwin.tar.gz"
-      sha256 "20748f24d86790b54f9b1e954f3bf161e5cdbe6e459040481d6f33957c9681dc"
+      sha256 "7ad00bb5309c4ac8515193ca3b022528e00d44922f66f8d67fc898eebc39af17"
     end
     on_intel do
       url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.0/mdmore-v0.1.0-x86_64-apple-darwin.tar.gz"
-      sha256 "a37c0bd4e63b7ecd6a6bd198948bdd3c228c1846ff87645b51af19ff9b3b6b4b"
+      sha256 "3e46b2ea87b3a65657b3d8a5017595f9839bda76ca2d0f9a307bddea530df028"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.0/mdmore-v0.1.0-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "9056906b367a042fff0ac5ef09e15029f48d9d0dfb5f2503eaef5eca639959a5"
+      sha256 "827cab941884882fddd53a6ea68873aa0bca72e93d660e3b5ad46a29799de10a"
     end
     on_intel do
       url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.0/mdmore-v0.1.0-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "4c54e6903a7950db4574cd7e5e2e50722b4cec9997932270196996d54d3568af"
+      sha256 "c355dbddcf47a4820453f1e3ceed6dd8027b2c2f4f82d5c9c61cdf5adc994a6c"
     end
   end
 
