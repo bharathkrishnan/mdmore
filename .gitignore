@@ -1,2 +1,8 @@
 /target
 .DS_Store
+/demo/*.gif
+/demo/*.mp4
+/demo/*.png
+/demo/*.webm
+!/demo/mdmore.gif
+!/demo/mdmore.mp4
