@@ -24,12 +24,43 @@ const HIGHLIGHT_LIMIT: usize = 16 * 1024;
 static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
 static THEMES: OnceLock<ThemeSet> = OnceLock::new();
 
+// Scan long printable runs eight bytes at a time using portable integer
+// operations. Short words stay on the scalar path; suspicious chunks are
+// rescanned byte by byte so borrow propagation cannot affect the boundary.
+#[inline]
+fn printable_prefix(bytes: &[u8], minimum: u8) -> usize {
+    let mut index = 0;
+    for &byte in bytes.iter().take(8) {
+        if byte < minimum || byte > b'~' {
+            return index;
+        }
+        index += 1;
+    }
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    let lower = u64::from(minimum) * ONES;
+    while let Some(chunk) = bytes.get(index..index.saturating_add(8)) {
+        let word = u64::from_ne_bytes(chunk.try_into().expect("eight-byte chunk"));
+        let below = word.wrapping_sub(lower) & !word & HIGH;
+        let del = word ^ (0x7f * ONES);
+        let is_del = del.wrapping_sub(ONES) & !del & HIGH;
+        if (word & HIGH) | below | is_del != 0 {
+            break;
+        }
+        index += 8;
+    }
+    index
+        + bytes[index..]
+            .iter()
+            .take_while(|&&byte| byte >= minimum && byte <= b'~')
+            .count()
+}
+
 fn word_width(text: &str, limit: usize) -> usize {
-    let ascii = text
-        .bytes()
-        .take(limit.saturating_add(1))
-        .take_while(|byte| (b'!'..=b'~').contains(byte))
-        .count();
+    let ascii = printable_prefix(
+        &text.as_bytes()[..text.len().min(limit.saturating_add(1))],
+        b'!',
+    );
     if ascii > limit
         || ascii == text.len()
         || (text.as_bytes()[ascii].is_ascii_whitespace()
@@ -311,13 +342,12 @@ impl<'a> Renderer<'a> {
         // words or the grapheme immediately before a non-ASCII character.
         let available = width.saturating_sub(self.line.width);
         let space = rest.starts_with(' ');
-        let mut length = rest
-            .bytes()
-            .take(available)
-            .take_while(|&byte| {
-                (b' '..=b'~').contains(&byte) && (run.literal || (byte == b' ') == space)
-            })
-            .count();
+        let bytes = &rest.as_bytes()[..rest.len().min(available)];
+        let mut length = if !run.literal && space {
+            bytes.iter().take_while(|&&byte| byte == b' ').count()
+        } else {
+            printable_prefix(bytes, if run.literal { b' ' } else { b'!' })
+        };
         if rest
             .as_bytes()
             .get(length)
@@ -809,6 +839,39 @@ impl Iterator for Renderer<'_> {
             } else {
                 self.flush(false);
                 self.finished = true;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::printable_prefix;
+
+    #[test]
+    fn printable_scanner_matches_scalar_at_every_lane_and_byte() {
+        for minimum in *b" !" {
+            for length in 0..40 {
+                for offset in 0..length {
+                    for byte in 0..=255 {
+                        let mut bytes = vec![b'x'; length];
+                        bytes[offset] = byte;
+                        let expected = bytes
+                            .iter()
+                            .take_while(|&&b| b >= minimum && b <= b'~')
+                            .count();
+                        assert_eq!(
+                            printable_prefix(&bytes, minimum),
+                            expected,
+                            "len={length} offset={offset} byte={byte}"
+                        );
+                    }
+                }
+                let spaces = vec![b' '; length];
+                assert_eq!(
+                    printable_prefix(&spaces, minimum),
+                    if minimum == b' ' { length } else { 0 }
+                );
             }
         }
     }
