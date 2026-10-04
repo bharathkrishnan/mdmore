@@ -190,6 +190,38 @@ fn ascii_adjacent_to_combining_marks_stays_in_one_grapheme() {
 }
 
 #[test]
+fn unicode_runs_keep_graphemes_styles_and_source_anchors() {
+    let word = "世界你好日本語한국어か\u{3099}👩🏽‍💻e\u{301}";
+    let source = format!("**{word}**");
+    let lines = render(&source, 12);
+    let rows: Vec<_> = lines.iter().filter(|line| !line.spans.is_empty()).collect();
+    assert_eq!(
+        rows.iter().map(|line| line.plain()).collect::<Vec<_>>(),
+        ["世界你好日本", "語한국어か\u{3099}👩🏽‍💻", "e\u{301}",]
+    );
+    assert_eq!(
+        rows.iter().map(|line| line.source).collect::<Vec<_>>(),
+        [2, 2 + word.find('語').unwrap(), 2 + word.find('e').unwrap(),]
+    );
+    assert!(
+        rows.iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| span.style.bold)
+    );
+    assert_eq!(
+        rows.iter().map(|line| line.width).collect::<Vec<_>>(),
+        [12, 12, 1]
+    );
+
+    // An initial zero-width cluster must not move the resize anchor backward.
+    let lines = render("\u{301}\u{300}世界", 2);
+    assert_eq!(lines[0].plain(), "\u{301}\u{300}世");
+    assert_eq!(lines[0].source, 4);
+    assert_eq!(lines[1].plain(), "界");
+    assert_eq!(lines[1].source, 7);
+}
+
+#[test]
 fn terminal_escape_injection_is_removed_even_from_code_and_html() {
     let source = "# bad\x1b[2J\n\n```\ncode\x1b]52;c;payload\x07\n```\n\n<div>raw\x1b[31m</div>\n\nhello\u{202e}world";
     let lines = render(source, 80);

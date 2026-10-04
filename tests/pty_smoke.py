@@ -139,6 +139,30 @@ def main():
         finally:
             session.close()
 
+        unicode_source = "".join(
+            f"## 節 {i:04}\n\n**東京世界 한국어 か\u3099** 👩🏽‍💻 e\u0301 {i:04}\n\n"
+            for i in range(100)
+        )
+        Path(directory, "unicode.md").write_text(unicode_source)
+        session = Session(binary, directory, ["unicode.md"])
+        try:
+            initial = session.wait_for(b"q:quit")
+            for cluster in ["東京", "한국어", "か\u3099", "👩🏽‍💻", "e\u0301"]:
+                assert cluster.encode() in initial
+            start = session.send(b" ")
+            session.wait_for("東京".encode(), start)
+            start = session.send(b"/" + "東京".encode() + b"\r")
+            session.wait_for(b"48;5;3", start)
+            start = len(session.output)
+            session.resize(24, 12)
+            session.wait_for(b"\x1b[12;1H", start)
+            start = session.send(b"n")
+            session.wait_for(b"48;5;3", start)
+            session.finish()
+            print("PASS: Unicode clusters, paging, search, resize, and terminal restoration")
+        finally:
+            session.close()
+
         Path(directory, "large.md").write_text(source * 200)
         session = Session(binary, directory, ["large.md"])
         try:

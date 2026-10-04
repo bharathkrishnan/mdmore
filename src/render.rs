@@ -340,6 +340,47 @@ impl<'a> Renderer<'a> {
             return;
         }
 
+        // Keep one grapheme iterator for a Unicode word fragment instead of
+        // restarting it and appending to the span for every character.
+        if rest
+            .as_bytes()
+            .get(grapheme.len())
+            .is_some_and(|byte| !byte.is_ascii())
+        {
+            let mut length = 0;
+            let mut cells = 0;
+            let mut last = 0;
+            let following = rest[grapheme.len()..]
+                .grapheme_indices(true)
+                .map(|(index, part)| (grapheme.len() + index, part));
+            for (index, part) in std::iter::once((0, grapheme)).chain(following) {
+                if part.chars().all(char::is_whitespace) || part.chars().any(unsafe_char) {
+                    break;
+                }
+                let size = UnicodeWidthStr::width(part);
+                if cells + size > available {
+                    break;
+                }
+                if self.line.width == self.prefix_width && cells == 0 {
+                    self.line.source = source + if run.exact_offset { index } else { 0 };
+                }
+                cells += size;
+                length = index + part.len();
+                last = index;
+                // Let the ASCII fast path handle the next plain byte run.
+                if rest.as_bytes().get(length).is_some_and(u8::is_ascii) {
+                    break;
+                }
+            }
+            if length > 0 {
+                self.line.push_sized(&rest[..length], run.style, cells);
+                run.cursor += length;
+                run.word_start = false;
+                self.position = source + if run.exact_offset { last } else { 0 };
+                return;
+            }
+        }
+
         let whitespace = grapheme.chars().all(char::is_whitespace);
         let text = if grapheme == "\t" && run.literal {
             Cow::Owned(" ".repeat(4 - (self.line.width - self.prefix_width) % 4))
