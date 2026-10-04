@@ -13,9 +13,15 @@ clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
 memchr = "2.8"
 pulldown-cmark = { version = "0.13", default-features = false }
-syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-onig"] }
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
+
+[build-dependencies]
+syntect = { version = "5.3", default-features = false, features = ["default-themes", "dump-create"] }
+
+[dev-dependencies]
+syntect = { version = "5.3", default-features = false, features = ["default-themes"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["stdio", "termios", "fs"] }
