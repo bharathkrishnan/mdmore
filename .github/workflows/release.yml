@@ -48,7 +48,8 @@ jobs:
         run: |
           mkdir package
           cp "target/$TARGET/release/mdmore" LICENSE README.md package/
-          tar -czf "mdmore-$GITHUB_REF_NAME-$TARGET.tar.gz" -C package mdmore LICENSE README.md
+          cp -R docs package/docs
+          tar -czf "mdmore-$GITHUB_REF_NAME-$TARGET.tar.gz" -C package mdmore LICENSE README.md docs
       - uses: actions/upload-artifact@v7
         with:
           path: mdmore-*.tar.gz
