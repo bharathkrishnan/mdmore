@@ -217,7 +217,7 @@ impl<'a> Pager<'a> {
             truncate(&safe_text(&self.status()), usize::from(self.columns))
         )?;
         if self.color {
-            queue!(status, ResetColor, SetAttribute(Attribute::Reset))?;
+            queue!(status, ResetColor)?;
         }
         // Write changed rows together to reduce partial updates.
         self.output.clear();
@@ -228,7 +228,6 @@ impl<'a> Pager<'a> {
                     output,
                     MoveTo(0, row as u16),
                     ResetColor,
-                    SetAttribute(Attribute::Reset),
                     Clear(ClearType::CurrentLine)
                 )?;
                 output.extend_from_slice(bytes);

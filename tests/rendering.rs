@@ -357,7 +357,10 @@ fn repeated_search_highlights_follow_matches_across_styles() {
         styles[1].content(true).apply("a"),
         styles[2].content(true).apply("ba")
     );
-    assert_eq!(String::from_utf8(ansi).unwrap(), expected);
+    assert_eq!(
+        styled_cells(&String::from_utf8(ansi).unwrap()),
+        styled_cells(&expected)
+    );
 
     let mut combining = Line::default();
     combining.push("e\u{301} e\u{301}", Style::default());
@@ -368,7 +371,10 @@ fn repeated_search_highlights_follow_matches_across_styles() {
         Style::default().content(true).apply("e\u{301}"),
         Style::default().content(true).apply("e\u{301}")
     );
-    assert_eq!(String::from_utf8(ansi).unwrap(), expected);
+    assert_eq!(
+        styled_cells(&String::from_utf8(ansi).unwrap()),
+        styled_cells(&expected)
+    );
 }
 
 #[test]
@@ -424,4 +430,101 @@ fn table_columns_stay_aligned_when_cells_wrap() {
             .any(|span| span.style.bold && span.text.contains("wrapping"))
     );
     assert!(rows.iter().any(|line| line.plain().ends_with("42")));
+}
+
+// Interpret the SGR subset emitted by crossterm, comparing terminal-visible
+// characters and styles rather than the spelling of equivalent sequences.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct CellStyle {
+    foreground: Option<Vec<u16>>,
+    background: Option<Vec<u16>>,
+    attributes: std::collections::BTreeSet<u16>,
+}
+
+fn styled_cells(ansi: &str) -> (Vec<(char, CellStyle)>, CellStyle) {
+    let mut style = CellStyle::default();
+    let mut cells = Vec::new();
+    let mut rest = ansi;
+    while !rest.is_empty() {
+        if let Some(sgr) = rest.strip_prefix("\x1b[") {
+            let end = sgr.find('m').expect("SGR terminator");
+            let values: Vec<u16> = sgr[..end]
+                .split(';')
+                .map(|part| part.parse().unwrap())
+                .collect();
+            let mut i = 0;
+            while i < values.len() {
+                match values[i] {
+                    0 => style = CellStyle::default(),
+                    1 | 2 | 3 | 4 | 9 => {
+                        style.attributes.insert(values[i]);
+                    }
+                    38 | 48 => {
+                        let count = match values[i + 1] {
+                            5 => 3,
+                            2 => 5,
+                            _ => panic!("color encoding"),
+                        };
+                        let color = Some(values[i + 1..i + count].to_vec());
+                        if values[i] == 38 {
+                            style.foreground = color;
+                        } else {
+                            style.background = color;
+                        }
+                        i += count - 1;
+                    }
+                    39 => style.foreground = None,
+                    49 => style.background = None,
+                    value => panic!("unexpected SGR {value}"),
+                }
+                i += 1;
+            }
+            rest = &sgr[end + 1..];
+        } else {
+            let ch = rest.chars().next().unwrap();
+            cells.push((ch, style.clone()));
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+    (cells, style)
+}
+
+#[test]
+fn ansi_transitions_preserve_colors_attributes_and_final_reset() {
+    crossterm::style::force_color_output(true);
+    let styles = [
+        Style::color(Color::Rgb {
+            r: 10,
+            g: 20,
+            b: 30,
+        }),
+        Style::color(Color::Rgb {
+            r: 30,
+            g: 20,
+            b: 10,
+        }),
+        Style {
+            bold: true,
+            dim: true,
+            ..Style::default()
+        },
+        Style {
+            italic: true,
+            underline: true,
+            strike: true,
+            ..Style::default()
+        },
+        Style::default(),
+    ];
+    let mut line = Line::default();
+    let mut reference = String::new();
+    for style in styles {
+        line.push("a日本e\u{301}👩‍🌾", style);
+        reference.push_str(&style.content(false).apply("a日本e\u{301}👩‍🌾").to_string());
+    }
+    let mut output = Vec::new();
+    line.write(&mut output, true, "").unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(styled_cells(&output), styled_cells(&reference));
+    assert!(output.len() < reference.len());
 }

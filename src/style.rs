@@ -1,6 +1,9 @@
 use std::io::{self, Write};
 
-use crossterm::style::{Attribute, Color, ContentStyle};
+use crossterm::style::{
+    Attribute, Color, ContentStyle, ResetColor, SetAttribute, SetBackgroundColor,
+    SetForegroundColor,
+};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -48,6 +51,70 @@ impl Style {
             style.attributes.set(Attribute::Bold);
         }
         style
+    }
+}
+
+struct StyledWriter<'a, W> {
+    out: &'a mut W,
+    active: ContentStyle,
+}
+
+impl<W: Write> StyledWriter<'_, W> {
+    fn piece(&mut self, text: &str, style: ContentStyle) -> io::Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        if self.active == style {
+            return self.out.write_all(text.as_bytes());
+        }
+        if self.active.attributes != style.attributes {
+            // Disabling attributes individually is subtle (bold and dim share
+            // a reset). Reset once, then establish the complete new style.
+            if self.active != ContentStyle::default() {
+                write!(self.out, "{}", ResetColor)?;
+            }
+            if let Some(color) = style.background_color {
+                write!(self.out, "{}", SetBackgroundColor(color))?;
+            }
+            if let Some(color) = style.foreground_color {
+                write!(self.out, "{}", SetForegroundColor(color))?;
+            }
+            for attribute in [
+                Attribute::Bold,
+                Attribute::Italic,
+                Attribute::Underlined,
+                Attribute::Dim,
+                Attribute::CrossedOut,
+            ] {
+                if style.attributes.has(attribute) {
+                    write!(self.out, "{}", SetAttribute(attribute))?;
+                }
+            }
+        } else {
+            if self.active.foreground_color != style.foreground_color {
+                write!(
+                    self.out,
+                    "{}",
+                    SetForegroundColor(style.foreground_color.unwrap_or(Color::Reset))
+                )?;
+            }
+            if self.active.background_color != style.background_color {
+                write!(
+                    self.out,
+                    "{}",
+                    SetBackgroundColor(style.background_color.unwrap_or(Color::Reset))
+                )?;
+            }
+        }
+        self.active = style;
+        self.out.write_all(text.as_bytes())
+    }
+
+    fn finish(self) -> io::Result<()> {
+        if self.active != ContentStyle::default() {
+            write!(self.out, "{}", ResetColor)?;
+        }
+        Ok(())
     }
 }
 
@@ -109,6 +176,10 @@ impl Line {
             }
             return Ok(());
         }
+        let mut writer = StyledWriter {
+            out,
+            active: ContentStyle::default(),
+        };
         let plain = if query.is_empty() {
             String::new()
         } else {
@@ -126,7 +197,11 @@ impl Line {
         let mut next_match = 0;
         for span in &self.spans {
             if matches.is_empty() {
-                write!(out, "{}", span.style.content(false).apply(&span.text))?;
+                if span.style == Style::default() && writer.active == ContentStyle::default() {
+                    writer.out.write_all(span.text.as_bytes())?;
+                } else {
+                    writer.piece(&span.text, span.style.content(false))?;
+                }
                 offset += span.text.len();
                 continue;
             }
@@ -144,24 +219,16 @@ impl Line {
                     .is_some_and(|range| range.start < offset + index + grapheme.len());
                 if highlighted != active {
                     if index > start {
-                        write!(
-                            out,
-                            "{}",
-                            span.style.content(active).apply(&span.text[start..index])
-                        )?;
+                        writer.piece(&span.text[start..index], span.style.content(active))?;
                     }
                     start = index;
                     active = highlighted;
                 }
             }
-            write!(
-                out,
-                "{}",
-                span.style.content(active).apply(&span.text[start..])
-            )?;
+            writer.piece(&span.text[start..], span.style.content(active))?;
             offset += span.text.len();
         }
-        Ok(())
+        writer.finish()
     }
 }
 
