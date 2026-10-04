@@ -9,7 +9,7 @@ use pulldown_cmark::{
     Alignment, CodeBlockKind, CowStr, Event, OffsetIter, Options, Parser, Tag, TagEnd,
 };
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{FontStyle, ThemeSet};
+use syntect::highlighting::{FontStyle, Theme};
 use syntect::parsing::SyntaxSet;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -22,7 +22,17 @@ const CODE: Style = Style::color(Color::Yellow);
 const HIGHLIGHT_LIMIT: usize = 16 * 1024;
 
 static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
-static THEMES: OnceLock<ThemeSet> = OnceLock::new();
+static THEME: OnceLock<Theme> = OnceLock::new();
+
+fn syntax_theme() -> &'static Theme {
+    THEME.get_or_init(|| {
+        syntect::dumps::from_uncompressed_data(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/base16-ocean.dark.bin"
+        )))
+        .expect("build-time syntax theme")
+    })
+}
 
 // Scan long printable runs eight bytes at a time using portable integer
 // operations. Short words stay on the scalar path; suspicious chunks are
@@ -633,14 +643,10 @@ impl<'a> Renderer<'a> {
                     );
                     let highlighter = if self.highlight {
                         let syntaxes = SYNTAXES.get_or_init(SyntaxSet::load_defaults_newlines);
-                        let themes = THEMES.get_or_init(ThemeSet::load_defaults);
                         let syntax = syntaxes
                             .find_syntax_by_token(&language)
                             .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
-                        Some(HighlightLines::new(
-                            syntax,
-                            &themes.themes["base16-ocean.dark"],
-                        ))
+                        Some(HighlightLines::new(syntax, syntax_theme()))
                     } else {
                         None
                     };
@@ -812,6 +818,15 @@ impl<'a> Renderer<'a> {
                 self.run(text, CODE, false, range.start, false)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    #[test]
+    fn embedded_theme_is_identical_to_the_original_default() {
+        let themes = syntect::highlighting::ThemeSet::load_defaults();
+        assert_eq!(super::syntax_theme(), &themes.themes["base16-ocean.dark"]);
     }
 }
 
