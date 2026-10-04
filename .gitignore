@@ -6,3 +6,7 @@
 /demo/*.webm
 !/demo/mdmore.gif
 !/demo/mdmore.mp4
+
+# Local internal material
+/private/
+/AGENTS.md

@@ -72,6 +72,11 @@ struct Pager<'a> {
     message: String,
     // Compare serialized rows to redraw only those that changed.
     frame: Vec<Vec<u8>>,
+    scratch: Vec<Vec<u8>>,
+    output: Vec<u8>,
+    frame_top: usize,
+    frame_query: String,
+    frame_help: bool,
 }
 
 impl<'a> Pager<'a> {
@@ -98,6 +103,11 @@ impl<'a> Pager<'a> {
             mode: Mode::Reading,
             message: String::new(),
             frame: Vec::new(),
+            scratch: Vec::new(),
+            output: Vec::new(),
+            frame_top: 0,
+            frame_query: String::new(),
+            frame_help: false,
         })
     }
 
@@ -155,7 +165,10 @@ impl<'a> Pager<'a> {
         self.doc
             .ensure(self.top.saturating_add(self.height()).saturating_add(1));
         self.clamp();
-        let mut next_frame = Vec::with_capacity(usize::from(self.rows));
+        let mut next_frame = std::mem::take(&mut self.scratch);
+        next_frame.resize_with(usize::from(self.rows), Vec::new);
+        let is_help = matches!(self.mode, Mode::Help);
+        let reuse = !is_help && !self.frame_help && self.query == self.frame_query;
         let help = [
             "mdmore — keys",
             "",
@@ -173,9 +186,15 @@ impl<'a> Pager<'a> {
             "q / Ctrl-C               Quit",
             "? / h                    This help",
         ];
-        for row in 0..self.height() {
-            let mut bytes = Vec::new();
-            if matches!(self.mode, Mode::Help) {
+        for (row, bytes) in next_frame.iter_mut().take(self.height()).enumerate() {
+            bytes.clear();
+            let cached = (self.top + row)
+                .checked_sub(self.frame_top)
+                .filter(|&index| index < self.frame.len().saturating_sub(1))
+                .and_then(|index| self.frame.get(index));
+            if let Some(cached) = cached.filter(|_| reuse) {
+                bytes.extend_from_slice(cached);
+            } else if is_help {
                 bytes.extend_from_slice(
                     truncate(
                         help.get(row).copied().unwrap_or(""),
@@ -184,11 +203,11 @@ impl<'a> Pager<'a> {
                     .as_bytes(),
                 );
             } else if let Some(line) = self.doc.lines.get(self.top + row) {
-                line.write(&mut bytes, self.color, &self.query)?;
+                line.write(bytes, self.color, &self.query)?;
             }
-            next_frame.push(bytes);
         }
-        let mut status = Vec::new();
+        let status = &mut next_frame[self.height()];
+        status.clear();
         if self.color {
             queue!(status, SetAttribute(Attribute::Reverse))?;
         }
@@ -200,9 +219,9 @@ impl<'a> Pager<'a> {
         if self.color {
             queue!(status, ResetColor, SetAttribute(Attribute::Reset))?;
         }
-        next_frame.push(status);
         // Write changed rows together to reduce partial updates.
-        let mut output = Vec::new();
+        self.output.clear();
+        let output = &mut self.output;
         for (row, bytes) in next_frame.iter().enumerate() {
             if self.frame.get(row) != Some(bytes) {
                 queue!(
@@ -215,9 +234,12 @@ impl<'a> Pager<'a> {
                 output.extend_from_slice(bytes);
             }
         }
-        out.write_all(&output)?;
+        out.write_all(output)?;
         out.flush()?;
-        self.frame = next_frame;
+        self.scratch = std::mem::replace(&mut self.frame, next_frame);
+        self.frame_top = self.top;
+        self.frame_query.clone_from(&self.query);
+        self.frame_help = is_help;
         Ok(())
     }
 
@@ -474,4 +496,96 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pager(source: &str) -> Pager<'_> {
+        Pager {
+            doc: Document::new(source, 80, false),
+            name: "test".into(),
+            columns: 80,
+            rows: 24,
+            width_limit: None,
+            top: 0,
+            color: true,
+            query: String::new(),
+            last_match: None,
+            quit: false,
+            mode: Mode::Reading,
+            message: String::new(),
+            frame: Vec::new(),
+            scratch: Vec::new(),
+            output: Vec::new(),
+            frame_top: 0,
+            frame_query: String::new(),
+            frame_help: false,
+        }
+    }
+
+    fn check(p: &mut Pager<'_>) {
+        p.draw(&mut Vec::new()).unwrap();
+        if matches!(p.mode, Mode::Reading) {
+            for row in 0..p.height() {
+                let mut expected = Vec::new();
+                if let Some(line) = p.doc.lines.get(p.top + row) {
+                    line.write(&mut expected, p.color, &p.query).unwrap();
+                }
+                assert_eq!(p.frame[row], expected, "row {row}");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_survives_scroll_search_help_and_reflow() {
+        crossterm::style::force_color_output(true);
+        let source = "Some **bold** text with 日本語 and 👩‍🌾.\n\n".repeat(100);
+        let mut p = pager(&source);
+        check(&mut p);
+        p.top = 3;
+        check(&mut p);
+        p.top = 1;
+        check(&mut p);
+        p.query = "bold".into();
+        check(&mut p);
+        p.mode = Mode::Help;
+        check(&mut p);
+        p.mode = Mode::Reading;
+        check(&mut p);
+        p.query.clear();
+        check(&mut p);
+        p.resize(40, 12);
+        check(&mut p);
+        p.top = p.doc.lines.len().saturating_sub(1);
+        check(&mut p);
+        p.resize(80, 24);
+        check(&mut p);
+    }
+
+    #[test]
+    #[ignore = "release performance measurement"]
+    fn draw_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        crossterm::style::force_color_output(true);
+        let source = "Some **bold** and *italic* text with 日本語 and 👩‍🌾.\n\n".repeat(100);
+        for query in ["", "bold"] {
+            let mut p = pager(&source);
+            p.query = query.into();
+            p.doc.ensure(100);
+            let mut out = std::io::sink();
+            p.draw(&mut out).unwrap();
+            let start = Instant::now();
+            for index in 0..20_000 {
+                p.top = index % 20;
+                p.draw(&mut out).unwrap();
+                black_box(&p.frame);
+            }
+            eprintln!(
+                "draw query={query:?}: {} ns/iteration",
+                start.elapsed().as_nanos() / 20_000
+            );
+        }
+    }
 }
