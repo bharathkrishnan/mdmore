@@ -7,6 +7,13 @@ and keeps colors and formatting across page boundaries.
 
 [Watch the video](https://github.com/bharathkrishnan/mdmore/raw/refs/heads/main/demo/mdmore.mp4)
 
+## Performance history
+
+![Performance improvements from v0.1.0 through v0.1.2](docs/performance.svg)
+
+Measured CPU speed across three releases on the same machine and compiler.
+Higher is faster; gains depend on the workload. See the [timings and methodology](docs/performance.md).
+
 ## Install
 
 ### Homebrew
