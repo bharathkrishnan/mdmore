@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
 use mdmore::render::Renderer;
+use mdmore::style::safe_text;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ColorMode {
@@ -132,7 +133,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("mdmore: {error}");
+            eprintln!("mdmore: {}", safe_text(&error.to_string()));
             ExitCode::FAILURE
         }
     }

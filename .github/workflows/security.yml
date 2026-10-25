@@ -1,0 +1,22 @@
+name: Security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked --version 0.22.2
+      # Keep unmaintained warnings visible; fail on vulnerabilities, unsoundness,
+      # and yanked crates.
+      - run: cargo audit --deny unsound --deny yanked

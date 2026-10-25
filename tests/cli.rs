@@ -76,6 +76,39 @@ fn invalid_utf8_is_rejected() {
 }
 
 #[test]
+fn file_errors_cannot_inject_terminal_controls() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdmore"))
+        .arg("/nonexistent/mdmore-\x1b]52;c;payload\x07\n\u{009b}2J\u{202e}.md")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(error.contains("mdmore-]52;c;payload2J.md"), "{error:?}");
+    assert!(error.ends_with('\n'));
+    assert!(
+        !error
+            .trim_end_matches('\n')
+            .chars()
+            .any(|c| c.is_control()
+                || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn malformed_markdown_does_not_panic() {
+    // Regression inputs from upstream parser security reports (#1179).
+    for source in ["- [o]:u\n \t", " \u{fffd} ![[] ]()]]"] {
+        let output = stdin_run(&["--plain"], source);
+        assert!(
+            output.status.success(),
+            "{source:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn explicit_color_always_overrides_no_color_environment() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_mdmore"))
         .args(["--color", "always", "--no-pager"])
