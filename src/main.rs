@@ -1,7 +1,7 @@
 mod pager;
 
 use std::io::{self, IsTerminal, Read, Write};
-use std::num::NonZeroU16;
+use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -37,6 +37,12 @@ struct Cli {
     /// Skip syntax highlighting of fenced code blocks.
     #[arg(long)]
     no_highlight: bool,
+    /// Open at the first heading with this exact text.
+    #[arg(long)]
+    heading: Option<String>,
+    /// Maximum rendered-row cache size in MiB (default: 8).
+    #[arg(long, default_value = "8")]
+    cache_mib: NonZeroUsize,
     /// Disable mouse wheel handling in the pager.
     #[arg(long)]
     no_mouse: bool,
@@ -60,6 +66,22 @@ fn run(cli: Cli) -> io::Result<()> {
             io::Error::new(error.kind(), format!("{}: {error}", path.display()))
         })?;
         path.display().to_string()
+    };
+    let heading_offset = if let Some(heading) = &cli.heading {
+        Some(
+            mdmore::outline::headings(&source)
+                .into_iter()
+                .find(|h| h.text == *heading)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("heading not found: {heading}"),
+                    )
+                })?
+                .source,
+        )
+    } else {
+        None
     };
     let dumb = std::env::var_os("TERM").is_some_and(|term| term == "dumb");
     let color = !cli.plain
@@ -85,14 +107,23 @@ fn run(cli: Cli) -> io::Result<()> {
         pager::run(
             &source,
             &name,
-            cli.width.map(NonZeroU16::get),
-            color,
-            highlight,
-            !cli.no_mouse,
+            pager::Settings {
+                width_limit: cli.width.map(NonZeroU16::get),
+                color,
+                highlight,
+                mouse: !cli.no_mouse,
+                heading_offset,
+                cache_limit: cli.cache_mib.get().saturating_mul(1024 * 1024),
+            },
         )
     } else {
         let mut out = io::BufWriter::new(io::stdout().lock());
+        let mut started = heading_offset.is_none();
         for line in Renderer::new(&source, usize::from(width), highlight) {
+            started |= heading_offset.is_some_and(|offset| line.source >= offset);
+            if !started {
+                continue;
+            }
             line.write(&mut out, color, "")?;
             out.write_all(b"\n")?;
         }

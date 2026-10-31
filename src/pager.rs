@@ -13,6 +13,7 @@ use crossterm::terminal::{
 };
 use crossterm::{execute, queue};
 use mdmore::document::Document;
+use mdmore::outline::{Heading, headings};
 use mdmore::style::{safe_text, truncate, unsafe_char};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -55,10 +56,17 @@ enum Mode {
     Reading,
     Search(String),
     Help,
+    Outline {
+        filter: String,
+        selected: usize,
+        matches: Vec<usize>,
+    },
 }
 
 struct Pager<'a> {
     doc: Document<'a>,
+    source: &'a str,
+    headings: Option<Vec<Heading>>,
     name: String,
     columns: u16,
     rows: u16,
@@ -67,6 +75,10 @@ struct Pager<'a> {
     color: bool,
     query: String,
     last_match: Option<usize>,
+    heading_anchor: Option<usize>,
+    cache_limit: usize,
+    saved_anchor: usize,
+    pending_reflow: Option<usize>,
     quit: bool,
     mode: Mode,
     message: String,
@@ -86,11 +98,14 @@ impl<'a> Pager<'a> {
         width_limit: Option<u16>,
         color: bool,
         highlight: bool,
+        cache_limit: usize,
     ) -> io::Result<Self> {
         let (columns, rows) = terminal::size()?;
         let width = width_limit.unwrap_or(columns).min(columns).max(1);
         Ok(Self {
             doc: Document::new(source, usize::from(width), highlight),
+            source,
+            headings: None,
             name: safe_text(name),
             columns: columns.max(1),
             rows: rows.max(1),
@@ -99,6 +114,10 @@ impl<'a> Pager<'a> {
             color,
             query: String::new(),
             last_match: None,
+            heading_anchor: None,
+            cache_limit,
+            saved_anchor: 0,
+            pending_reflow: None,
             quit: false,
             mode: Mode::Reading,
             message: String::new(),
@@ -116,13 +135,17 @@ impl<'a> Pager<'a> {
     }
 
     fn clamp(&mut self) {
-        self.top = self
-            .top
-            .min(self.doc.lines.len().saturating_sub(self.height().max(1)));
+        let max_top = if self.heading_anchor.is_some() {
+            self.doc.end().saturating_sub(1)
+        } else {
+            self.doc.end().saturating_sub(self.height().max(1))
+        };
+        self.top = self.top.min(max_top);
     }
 
     fn move_down(&mut self, amount: usize) {
         self.last_match = None;
+        self.heading_anchor = None;
         let target = self.top.saturating_add(amount);
         self.doc
             .ensure(target.saturating_add(self.height()).saturating_add(1));
@@ -134,6 +157,9 @@ impl<'a> Pager<'a> {
         match &self.mode {
             Mode::Search(input) => format!("/{input}▏"),
             Mode::Help => "Help · press any key to return".to_owned(),
+            Mode::Outline { filter, .. } => {
+                format!("Outline: {filter}▏   ↑↓:select  Enter:open  Esc:cancel")
+            }
             Mode::Reading => {
                 if !self.message.is_empty() {
                     return self.message.clone();
@@ -141,11 +167,11 @@ impl<'a> Pager<'a> {
                 if self.doc.complete && self.doc.lines.is_empty() {
                     return format!("{} · empty · END   q:quit", self.name);
                 }
-                let at_end = self.doc.complete && self.top + self.height() >= self.doc.lines.len();
+                let at_end = self.doc.complete && self.top + self.height() >= self.doc.end();
                 let progress = if at_end {
                     "END".to_owned()
                 } else {
-                    let offset = self.doc.lines.get(self.top).map_or(0, |line| line.source);
+                    let offset = self.doc.line(self.top).map_or(0, |line| line.source);
                     format!(
                         "{}%",
                         offset.saturating_mul(100) / self.doc.source_len().max(1)
@@ -155,20 +181,82 @@ impl<'a> Pager<'a> {
                     "{} · {}–{} · {progress}   Space:page  /:search  ?:help  q:quit",
                     self.name,
                     self.top + 1,
-                    (self.top + self.height()).min(self.doc.lines.len())
+                    (self.top + self.height()).min(self.doc.end())
                 )
             }
         }
     }
 
     fn draw(&mut self, out: &mut impl Write) -> io::Result<()> {
+        loop {
+            while let Some(anchor) = self.pending_reflow.take() {
+                self.busy(out, "Reflowing… Esc:cancel")?;
+                loop {
+                    let start = self.doc.end();
+                    self.doc.ensure(start.saturating_add(128));
+                    if let Some(row) = self
+                        .doc
+                        .lines
+                        .iter()
+                        .skip(start - self.doc.base)
+                        .position(|line| line.source >= anchor)
+                    {
+                        self.top = start + row;
+                        break;
+                    }
+                    if self.doc.complete {
+                        self.top = self.doc.end().saturating_sub(1);
+                        break;
+                    }
+                    self.doc
+                        .trim(self.cache_limit, self.doc.end().saturating_sub(128));
+                    if self.cancel_pending()? {
+                        break;
+                    }
+                }
+                self.frame.clear();
+            }
+            if self.top < self.doc.base || self.top > self.doc.end().saturating_add(128) {
+                self.busy(out, "Restoring rows… Esc:cancel")?;
+                let target = self.top;
+                if target < self.doc.base {
+                    self.doc.rewind();
+                }
+                while self.doc.end() < target && !self.doc.complete {
+                    if self.cancel_pending()? {
+                        break;
+                    }
+                    self.doc
+                        .ensure(self.doc.end().saturating_add(128).min(target));
+                    self.doc.trim(
+                        self.cache_limit,
+                        self.doc
+                            .end()
+                            .saturating_sub(self.height().saturating_add(1)),
+                    );
+                }
+                self.frame.clear();
+            }
+            if self.pending_reflow.is_none() {
+                break;
+            }
+        }
         self.doc
             .ensure(self.top.saturating_add(self.height()).saturating_add(1));
         self.clamp();
         let mut next_frame = std::mem::take(&mut self.scratch);
         next_frame.resize_with(usize::from(self.rows), Vec::new);
-        let is_help = matches!(self.mode, Mode::Help);
+        let is_help = !matches!(self.mode, Mode::Reading | Mode::Search(_));
         let reuse = !is_help && !self.frame_help && self.query == self.frame_query;
+        let outline = if let Mode::Outline {
+            selected, matches, ..
+        } = &self.mode
+        {
+            let start = selected.saturating_sub(self.height().saturating_sub(1));
+            Some((matches, *selected, start))
+        } else {
+            None
+        };
         let help = [
             "mdmore — keys",
             "",
@@ -181,6 +269,8 @@ impl<'a> Pager<'a> {
             "G / End                  End (Esc cancels)",
             "/                        Search (case-sensitive)",
             "n / N                    Next / previous matching line",
+            "o                        Searchable heading outline",
+            "[ / ]                    Previous / next heading",
             "Esc                      Clear search highlighting",
             "Mouse wheel              Scroll",
             "q / Ctrl-C               Quit",
@@ -194,6 +284,20 @@ impl<'a> Pager<'a> {
                 .and_then(|index| self.frame.get(index));
             if let Some(cached) = cached.filter(|_| reuse) {
                 bytes.extend_from_slice(cached);
+            } else if let Some((items, selected, start)) = &outline {
+                if let Some(item) = items
+                    .get(start + row)
+                    .map(|&i| &self.headings.as_ref().unwrap()[i])
+                {
+                    let prefix = if start + row == *selected { "> " } else { "  " };
+                    let text = format!(
+                        "{}{}{}",
+                        prefix,
+                        "  ".repeat(item.level.saturating_sub(1)),
+                        safe_text(&item.text)
+                    );
+                    bytes.extend_from_slice(truncate(&text, usize::from(self.columns)).as_bytes());
+                }
             } else if is_help {
                 bytes.extend_from_slice(
                     truncate(
@@ -202,7 +306,7 @@ impl<'a> Pager<'a> {
                     )
                     .as_bytes(),
                 );
-            } else if let Some(line) = self.doc.lines.get(self.top + row) {
+            } else if let Some(line) = self.doc.line(self.top + row) {
                 line.write(bytes, self.color, &self.query)?;
             }
         }
@@ -239,6 +343,10 @@ impl<'a> Pager<'a> {
         self.frame_top = self.top;
         self.frame_query.clone_from(&self.query);
         self.frame_help = is_help;
+        if let Some(line) = self.doc.line(self.top) {
+            self.saved_anchor = line.source;
+        }
+        self.doc.trim(self.cache_limit, self.top);
         Ok(())
     }
 
@@ -253,7 +361,9 @@ impl<'a> Pager<'a> {
                 .max(1),
         );
         if width != self.doc.width {
-            self.top = self.doc.resize(width, self.top, self.height());
+            self.pending_reflow = Some(self.saved_anchor);
+            self.doc.reset_width(width);
+            self.top = 0;
         }
         self.frame.clear();
         self.clamp();
@@ -270,6 +380,14 @@ impl<'a> Pager<'a> {
                                 && key.modifiers.contains(KeyModifiers::CONTROL)) =>
                 {
                     self.quit = key.code != KeyCode::Esc;
+                    if self.top < self.doc.base || self.top >= self.doc.end() {
+                        self.top = self
+                            .doc
+                            .end()
+                            .saturating_sub(self.height())
+                            .max(self.doc.base);
+                        self.heading_anchor = None;
+                    }
                     self.message = "Cancelled · q:quit".to_owned();
                     return Ok(true);
                 }
@@ -300,8 +418,14 @@ impl<'a> Pager<'a> {
                 return Ok(());
             }
             self.doc.advance();
+            self.doc.trim(
+                self.cache_limit,
+                self.doc
+                    .end()
+                    .saturating_sub(self.height().saturating_add(1)),
+            );
         }
-        self.top = self.doc.lines.len().saturating_sub(self.height());
+        self.top = self.doc.end().saturating_sub(self.height());
         self.frame.clear();
         Ok(())
     }
@@ -334,11 +458,34 @@ impl<'a> Pager<'a> {
         loop {
             if let Some(row) = self.doc.find_cached(&self.query, start, backward) {
                 self.top = row;
+                self.heading_anchor = None;
                 self.last_match = Some(row);
                 self.clamp();
                 self.message.clear();
                 self.frame.clear();
                 return Ok(());
+            }
+            if backward && self.doc.base > 0 {
+                self.doc.rewind();
+                let mut candidate = None;
+                while self.doc.end() < anchor && !self.doc.complete {
+                    if self.cancel_pending()? {
+                        self.frame.clear();
+                        return Ok(());
+                    }
+                    let start = self.doc.end();
+                    self.doc.ensure(start.saturating_add(128).min(anchor));
+                    candidate = self.doc.find_recent(&self.query, start).or(candidate);
+                    self.doc.trim(self.cache_limit, self.doc.end());
+                }
+                if let Some(row) = candidate {
+                    self.top = row;
+                    self.heading_anchor = None;
+                    self.last_match = Some(row);
+                    self.message.clear();
+                    self.frame.clear();
+                    return Ok(());
+                }
             }
             if backward || self.doc.complete {
                 self.message = if backward {
@@ -354,9 +501,58 @@ impl<'a> Pager<'a> {
                 self.frame.clear();
                 return Ok(());
             }
-            start = self.doc.lines.len();
+            start = self.doc.end();
             self.doc.advance();
+            self.doc.trim(self.cache_limit, start);
         }
+    }
+
+    fn jump_to_source(&mut self, offset: usize, out: &mut impl Write) -> io::Result<()> {
+        self.busy(out, "Finding heading… Esc:cancel")?;
+        if self.doc.base > 0
+            && self
+                .doc
+                .lines
+                .front()
+                .is_some_and(|line| line.source > offset)
+        {
+            self.doc.rewind();
+        }
+        while !self.doc.complete
+            && self
+                .doc
+                .lines
+                .back()
+                .is_none_or(|line| line.source < offset)
+        {
+            if self.cancel_pending()? {
+                return Ok(());
+            }
+            self.doc.advance();
+            if self
+                .doc
+                .lines
+                .back()
+                .is_some_and(|line| line.source < offset)
+            {
+                self.doc
+                    .trim(self.cache_limit, self.doc.end().saturating_sub(1));
+            }
+        }
+        self.top = self
+            .doc
+            .lines
+            .iter()
+            .position(|line| line.source >= offset)
+            .map(|row| row + self.doc.base)
+            .unwrap_or_else(|| self.doc.end().saturating_sub(1));
+        self.doc
+            .ensure(self.top.saturating_add(self.height()).saturating_add(1));
+        self.heading_anchor = Some(offset);
+        self.clamp();
+        self.last_match = None;
+        self.frame.clear();
+        Ok(())
     }
 
     fn key(&mut self, key: KeyEvent, out: &mut impl Write) -> io::Result<bool> {
@@ -367,6 +563,77 @@ impl<'a> Pager<'a> {
             return Ok(true);
         }
         self.message.clear();
+        if let Mode::Outline {
+            filter,
+            selected,
+            matches,
+        } = &mut self.mode
+        {
+            let mut changed = false;
+            let mut close = false;
+            let target = match key.code {
+                KeyCode::Esc => {
+                    close = true;
+                    None
+                }
+                KeyCode::Enter => {
+                    let target = matches
+                        .get(*selected)
+                        .map(|&i| self.headings.as_ref().unwrap()[i].source);
+                    close = true;
+                    target
+                }
+                KeyCode::Down => {
+                    *selected = selected
+                        .saturating_add(1)
+                        .min(matches.len().saturating_sub(1));
+                    None
+                }
+                KeyCode::Up => {
+                    *selected = selected.saturating_sub(1);
+                    None
+                }
+                KeyCode::Backspace => {
+                    if let Some((i, _)) = filter.grapheme_indices(true).next_back() {
+                        filter.truncate(i);
+                        changed = true;
+                    }
+                    None
+                }
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && !unsafe_char(c) =>
+                {
+                    filter.push(c);
+                    changed = true;
+                    None
+                }
+                _ => None,
+            };
+            if changed {
+                let needle = filter.to_lowercase();
+                matches.clear();
+                matches.extend(
+                    self.headings
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, h)| h.folded.contains(&needle).then_some(i)),
+                );
+                *selected = 0;
+            }
+            if close {
+                self.mode = Mode::Reading;
+            }
+            self.frame.clear();
+            if let Some(offset) = target {
+                self.jump_to_source(offset, out)?;
+            }
+            return Ok(false);
+        }
         if let Mode::Search(input) = &mut self.mode {
             match key.code {
                 KeyCode::Esc => self.mode = Mode::Reading,
@@ -402,6 +669,7 @@ impl<'a> Pager<'a> {
         let page = self.height().saturating_sub(1).max(1);
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             self.last_match = None;
+            self.heading_anchor = None;
             match key.code {
                 KeyCode::Char('d') => self.move_down((page / 2).max(1)),
                 KeyCode::Char('u') => self.top = self.top.saturating_sub((page / 2).max(1)),
@@ -424,6 +692,7 @@ impl<'a> Pager<'a> {
                 | KeyCode::Esc
         ) {
             self.last_match = None;
+            self.heading_anchor = None;
         }
         match key.code {
             KeyCode::Char('q') => return Ok(true),
@@ -434,6 +703,32 @@ impl<'a> Pager<'a> {
             KeyCode::Char('g') | KeyCode::Home => self.top = 0,
             KeyCode::Char('G') | KeyCode::End => self.end(out)?,
             KeyCode::Char('/') => self.mode = Mode::Search(String::new()),
+            KeyCode::Char('o') => {
+                self.headings.get_or_insert_with(|| headings(self.source));
+                self.mode = Mode::Outline {
+                    filter: String::new(),
+                    selected: 0,
+                    matches: (0..self.headings.as_ref().unwrap().len()).collect(),
+                };
+                self.frame.clear();
+            }
+            KeyCode::Char('[' | ']') => {
+                let current = self
+                    .heading_anchor
+                    .unwrap_or_else(|| self.doc.line(self.top).map_or(0, |line| line.source));
+                let all = self.headings.get_or_insert_with(|| headings(self.source));
+                let target = if key.code == KeyCode::Char('[') {
+                    all.iter().rev().find(|h| h.source < current)
+                } else {
+                    all.iter().find(|h| h.source > current)
+                }
+                .map(|h| h.source);
+                if let Some(offset) = target {
+                    self.jump_to_source(offset, out)?;
+                } else {
+                    self.message = "No heading in that direction".to_owned();
+                }
+            }
             KeyCode::Char('n') => self.search(false, false, out)?,
             KeyCode::Char('N') => self.search(true, false, out)?,
             KeyCode::Char('?') | KeyCode::Char('h') => self.mode = Mode::Help,
@@ -444,16 +739,26 @@ impl<'a> Pager<'a> {
     }
 }
 
-pub fn run(
-    source: &str,
-    name: &str,
-    width_limit: Option<u16>,
-    color: bool,
-    highlight: bool,
-    mouse: bool,
-) -> io::Result<()> {
+pub struct Settings {
+    pub width_limit: Option<u16>,
+    pub color: bool,
+    pub highlight: bool,
+    pub mouse: bool,
+    pub heading_offset: Option<usize>,
+    pub cache_limit: usize,
+}
+
+pub fn run(source: &str, name: &str, settings: Settings) -> io::Result<()> {
+    let Settings {
+        width_limit,
+        color,
+        highlight,
+        mouse,
+        heading_offset,
+        cache_limit,
+    } = settings;
     // Render the first viewport before changing terminal modes.
-    let mut pager = Pager::new(source, name, width_limit, color, highlight)?;
+    let mut pager = Pager::new(source, name, width_limit, color, highlight, cache_limit)?;
     pager.doc.ensure(pager.height().saturating_add(1));
     // Check input setup before entering raw mode. Poll retains queued keys.
     event::poll(Duration::ZERO)?;
@@ -474,8 +779,17 @@ pub fn run(
     }));
     let _terminal = Terminal::enter(mouse)?;
     let mut out = io::stdout();
+    if let Some(offset) = heading_offset {
+        pager.jump_to_source(offset, &mut out)?;
+    }
     loop {
+        if pager.quit {
+            break;
+        }
         pager.draw(&mut out)?;
+        if pager.quit {
+            break;
+        }
         match event::read()? {
             Event::Key(key) => {
                 if pager.key(key, &mut out)? || pager.quit {
@@ -487,6 +801,7 @@ pub fn run(
                 MouseEventKind::ScrollDown => pager.move_down(3),
                 MouseEventKind::ScrollUp => {
                     pager.last_match = None;
+                    pager.heading_anchor = None;
                     pager.top = pager.top.saturating_sub(3);
                 }
                 _ => {}
@@ -504,6 +819,8 @@ mod tests {
     fn pager(source: &str) -> Pager<'_> {
         Pager {
             doc: Document::new(source, 80, false),
+            source,
+            headings: None,
             name: "test".into(),
             columns: 80,
             rows: 24,
@@ -512,6 +829,10 @@ mod tests {
             color: true,
             query: String::new(),
             last_match: None,
+            heading_anchor: None,
+            cache_limit: 8 * 1024 * 1024,
+            saved_anchor: 0,
+            pending_reflow: None,
             quit: false,
             mode: Mode::Reading,
             message: String::new(),
@@ -561,6 +882,20 @@ mod tests {
         check(&mut p);
         p.resize(80, 24);
         check(&mut p);
+    }
+
+    #[test]
+    fn consecutive_heading_jumps_work_at_end_of_short_document() {
+        let mut p = pager("# One\n\n# Two\n\n# Three\n");
+        p.doc.ensure(100);
+        let mut out = Vec::new();
+        let key = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
+        p.key(key, &mut out).unwrap();
+        let second = p.heading_anchor.unwrap();
+        p.key(key, &mut out).unwrap();
+        let third = p.heading_anchor.unwrap();
+        assert!(third > second);
+        assert!(p.doc.lines[p.top].plain().contains("Three"));
     }
 
     #[test]

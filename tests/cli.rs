@@ -123,3 +123,23 @@ fn explicit_color_always_overrides_no_color_environment() {
     let ansi = String::from_utf8(output.stdout).unwrap();
     assert!(ansi.contains("38;5;14"), "{ansi:?}");
 }
+
+#[test]
+fn heading_option_opens_the_requested_heading() {
+    let output = stdin_run(
+        &["--plain", "--heading", "Second"],
+        "# First\n\nBefore\n\n## Second\n\nAfter\n",
+    );
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains("Before"));
+    assert!(text.contains("Second"));
+    assert!(text.contains("After"));
+    let missing = stdin_run(&["--heading", "Missing"], "# First\n");
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("heading not found")
+    );
+}

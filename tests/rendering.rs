@@ -78,7 +78,7 @@ fn large_paragraph_is_rendered_only_as_requested() {
     doc.ensure(24);
     assert_eq!(doc.lines.len(), 24);
     assert!(!doc.complete);
-    assert!(doc.lines.last().unwrap().source < 2_000);
+    assert!(doc.lines.back().unwrap().source < 2_000);
     let first = doc.lines[0].plain();
     doc.ensure(100);
     assert_eq!(doc.lines.len(), 100);
@@ -94,7 +94,7 @@ fn a_single_huge_code_block_is_progressive() {
     doc.ensure(24);
     assert_eq!(doc.lines.len(), 24);
     assert!(!doc.complete);
-    assert!(doc.lines.last().unwrap().source < 1_000);
+    assert!(doc.lines.back().unwrap().source < 1_000);
     assert!(
         doc.lines
             .iter()
@@ -317,7 +317,7 @@ fn cached_search_matches_plain_text_across_unicode_and_repeated_prefixes() {
                 );
                 line.push(&source[second..], Style::default());
                 let mut doc = Document::new("", 80, false);
-                doc.lines.push(line);
+                doc.lines.push_back(line);
                 for query in queries {
                     let expected = source.contains(query).then_some(0);
                     assert_eq!(doc.find_cached(query, 0, false), expected);
@@ -391,7 +391,7 @@ fn giant_code_line_wraps_without_eager_rendering() {
     doc.ensure(24);
     assert_eq!(doc.lines.len(), 24);
     assert!(!doc.complete);
-    assert!(doc.lines.last().unwrap().source < 2_000);
+    assert!(doc.lines.back().unwrap().source < 2_000);
 }
 
 #[test]

@@ -59,6 +59,8 @@ Resizing reflows the text around your position in the source.
 | `Ctrl-D`, `Ctrl-U` | Down / up half a page |
 | `g`, `Home` | Beginning |
 | `G`, `End` | End |
+| `o` | Search headings; arrow keys select and `Enter` opens |
+| `[`, `]` | Previous / next heading |
 | `/` | Search; `Enter` submits |
 | `n`, `N` | Next / previous matching row |
 | `Esc` | Cancel search input or clear highlighting |
@@ -67,17 +69,20 @@ Resizing reflows the text around your position in the source.
 | `q`, `Ctrl-C` | Exit |
 
 `Esc` also cancels a search or jump to the end while it is rendering.
+Heading lookup uses the text of Markdown headings; outline filtering is case-insensitive.
 Search is case-sensitive, operates on rendered rows, and stops at the beginning
 or end of the document. A match split across two rows does not match.
 
 ### Options
 
 ```sh
+mdmore --heading "Installation" README.md # Open at an exact heading
 mdmore --no-pager notes.md                 # Print without paging
 mdmore --plain notes.md                    # Print without ANSI styling
 mdmore --no-highlight notes.md             # Skip code syntax highlighting
 mdmore --width 100 notes.md                # Limit content width
 mdmore --no-mouse notes.md                 # Disable mouse wheel handling
+mdmore --cache-mib 16 notes.md              # Set rendered-row cache target
 mdmore --color always --no-pager notes.md | less -R
 mdmore --help
 ```
@@ -93,10 +98,12 @@ the first page. This lets reference links resolve definitions later in the file.
 Wrapping, styling, and code highlighting happen as rows are requested. Piped
 input waits for EOF.
 
-Rendered rows are cached for backward scrolling, so memory use grows as you
-read. Jumping to the end renders and caches the remaining rows. Resizing
-rebuilds rows up to the saved source position and fills the viewport.
-The position shown in the status bar is approximate.
+Rendered rows are cached for backward scrolling with an 8 MiB default target;
+`--cache-mib` changes it. The current viewport and rendering batches may
+exceed that target. Evicted rows are recreated from the source when revisited,
+so moving far backward can take time; Esc cancels long replay and search.
+The source and parser index are separate from the row cache. Resizing rebuilds
+rows up to the saved source position. The status position is approximate.
 
 Code highlighting runs one source line at a time. A line over 16 KiB disables
 syntax highlighting for the rest of that code block. Tables buffer one row
