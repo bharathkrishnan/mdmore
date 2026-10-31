@@ -63,6 +63,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           pattern: mdmore-*
@@ -75,4 +76,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" mdmore-*.tar.gz SHA256SUMS \
             --verify-tag --title "mdmore $GITHUB_REF_NAME" \
-            --notes "Markdown pager with progressive rendering. Binaries for macOS and Linux, on ARM64 and x86-64."
+            --notes-file "release-notes/$GITHUB_REF_NAME.md"
