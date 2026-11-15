@@ -7,23 +7,23 @@ class Mdmore < Formula
     depends_on macos: :ventura
 
     on_arm do
-      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.4/mdmore-v0.1.4-aarch64-apple-darwin.tar.gz"
-      sha256 "a0b73ac4b73c89f9eff02bdbc07b95414fe25c562e5b462e323cb71d915aaf73"
+      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.5/mdmore-v0.1.5-aarch64-apple-darwin.tar.gz"
+      sha256 "6d5c7c4f189c6b35b3e1e00f106e92071d420b14e9bed7ca207a49b9454b670b"
     end
     on_intel do
-      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.4/mdmore-v0.1.4-x86_64-apple-darwin.tar.gz"
-      sha256 "8bf43981ade9c50597e8af15315f5b78a3b14b1badf45985c69af9def30a787c"
+      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.5/mdmore-v0.1.5-x86_64-apple-darwin.tar.gz"
+      sha256 "037242004fb9b21c1fdc7b010d3f71b4fb21ca7a67188962aa6300fafcfc5989"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.4/mdmore-v0.1.4-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "034af11fe9602f9c2ce25cb2bfb704cd38081ebb4029b13a92b31864a70436ad"
+      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.5/mdmore-v0.1.5-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "72eb531334daa8e64cd03ebf56387f1cb0c1a575f2e65b850b3b4685ca353d6a"
     end
     on_intel do
-      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.4/mdmore-v0.1.4-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "3fe519e3e06e2f39cf782291a03c3d762f192c9397945eba714be4ce466fe753"
+      url "https://github.com/bharathkrishnan/mdmore/releases/download/v0.1.5/mdmore-v0.1.5-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "d6d90244faec00ff887128a630ee76707fdc090e50bab360a0141f4f2579793e"
     end
   end
 
